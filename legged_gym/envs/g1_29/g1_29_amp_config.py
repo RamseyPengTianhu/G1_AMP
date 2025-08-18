@@ -34,14 +34,16 @@ from legged_gym.envs.base.g1_legged_robot_config import G1LeggedRobotCfg, G1Legg
 MOTION_FILES = glob.glob('datasets/customed_g1/fist.csv')
 # MOTION_FILES = glob.glob('datasets/joint_from_simulation/forward_1.0.csv')  # Replace with your actual path to the motion files
 CARTESIAN_MOTION_FILES = glob.glob('datasets/cartesian_with_orientation_from_simulation/forward_1.0.csv')  # Replace with your actual path to the motion files
-CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('datasets/joints_and_cartesian_from_simulation/forward_1.0.csv')
+# CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('home/tianhu/amass/Retargeted_Data/Female1General_c3d/accad_to_g1A5_-_pick_up_box_stageii.pkl')
+# CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('/home/tianhu/amass/Retargeted_Data/accad_to_g1_joblib/Female1General_c3d/A5_-_pick_up_box_stageii.pkl')
+CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('/home/tianhu/amass/Retargeted_Data/accad_to_g1_joblib/Female1General_c3d/A15_-_skip_to_stand_stageii.pkl')
 
 
 class G129AMPCfg( G1LeggedRobotCfg ):
 
     class env( G1LeggedRobotCfg.env ):
         num_actions = 29
-        num_envs = 2048
+        num_envs = 500
         include_history_steps = None  # Number of steps of history to include.
         # 3 + 3 + 3 + 3 + 21 + 21 + 21 + 2 = 77
         # num_observations = 74
@@ -50,14 +52,18 @@ class G129AMPCfg( G1LeggedRobotCfg ):
         num_privileged_obs = 99
         reference_state_initialization = True
         reference_state_initialization_prob = 1
-        amp_motion_files = MOTION_FILES
+        amp_motion_files = CARTESIAN_AND_JOINT_MOTION_FILES
         episode_length_s = 20 # episode length in seconds
         g1_cartesian_link_names = ["left_hip_yaw_link", "left_knee_link", "left_ankle_roll_link",  
                               "right_hip_yaw_link", "right_knee_link", "right_ankle_roll_link",
                                 "torso_link", "head_link",
                               "left_shoulder_roll_link", "left_elbow_link", "left_rubber_hand",
                               "right_shoulder_roll_link", "right_elbow_link", "right_rubber_hand"]
-        key_point_names = ["left_wrist_yaw_link", "right_wrist_yaw_link", "left_ankle_roll_link", "right_ankle_roll_link"]
+        key_point_names = ['pelvis', 'left_hip_pitch_link', 'left_hip_roll_link', 'left_hip_yaw_link', 'left_knee_link', 'left_ankle_pitch_link', 'left_ankle_roll_link', 
+        'right_hip_pitch_link', 'right_hip_roll_link', 'right_hip_yaw_link', 'right_knee_link', 'right_ankle_pitch_link', 'right_ankle_roll_link', 
+        'waist_yaw_link', 'waist_roll_link', 'torso_link',  'left_shoulder_pitch_link', 'left_shoulder_roll_link', 'left_shoulder_yaw_link', 'left_elbow_link', 
+        'left_wrist_roll_link', 'left_wrist_pitch_link', 'left_wrist_yaw_link', 'right_shoulder_pitch_link', 'right_shoulder_roll_link', 
+        'right_shoulder_yaw_link', 'right_elbow_link', 'right_wrist_roll_link', 'right_wrist_pitch_link', 'right_wrist_yaw_link']
         data_type = 'joint'  # 'cartesian' or 'joint' or 'joints_and_cartesian'
 
     class init_state( G1LeggedRobotCfg.init_state ):
@@ -233,13 +239,13 @@ class G129AMPCfg( G1LeggedRobotCfg ):
             # stance_swing_coordination = 2.0
             # swing_height = 0.5
 
-            tracking_lin_vel = 0.0
-            tracking_ang_vel = 0.0
+            tracking_lin_vel = 3.0
+            tracking_ang_vel = 1.0
             # lin_vel_z = -2.0
             # ang_vel_xy = -0.05
             # orientation = 1.0
             # base_height = -1.0
-            strike = 20.0
+            # strike = 20.0
             dof_acc = -2.5e-7
             dof_vel = -1e-3
             feet_air_time = 0.0
@@ -269,9 +275,9 @@ class G129AMPCfg( G1LeggedRobotCfg ):
             lin_vel_y = [-1.4, 0.58]   # min max [m/s]
             ang_vel_yaw = [-7, 4.4]    # min max [rad/s]
             heading = [-3.14, 3.14]
-            target_radius = [0.8, 1.2] # min max [m]
-            target_theta = [-1, 1] # min max [rad]
-            target_z = 1.0 # min max [m]
+            # target_radius = [0.8, 1.2] # min max [m]
+            # target_theta = [-1, 1] # min max [rad]
+            # target_z = 1.0 # min max [m]
 
 
     # class sim( G1LeggedRobotCfg.sim ):
@@ -338,11 +344,12 @@ class G129AMPCfgPPO( G1LeggedRobotCfgPPO ):
         save_interval = 100
 
         amp_reward_coef = 0.2
-        amp_motion_files = MOTION_FILES
+        amp_motion_files = CARTESIAN_AND_JOINT_MOTION_FILES
         amp_cartesian_motion_files = CARTESIAN_MOTION_FILES
         amp_cartesian_and_joint_motion_files = CARTESIAN_AND_JOINT_MOTION_FILES
         
-        amp_num_preload_transitions = 2000000
+        # amp_num_preload_transitions = 2000000
+        amp_num_preload_transitions = 100000
         amp_task_reward_lerp = 0.3 # smaller to rely more on style reward(imitation)
         amp_discr_hidden_dims = [1024, 512]
 

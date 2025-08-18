@@ -125,6 +125,7 @@ class G1AMPOnPolicyRunner:
                 num_preload_transitions=train_cfg["runner"]["amp_num_preload_transitions"],
                 motion_files=self.runner_cfg["amp_cartesian_and_joint_motion_files"], selected_joint_indices=self.model_cfg["asset"]["selected_joint_indices"],
                 datatype="Cartesian")
+        # print('!!!!!!!!!!!!!!!!observation_dim:',amp_data.observation_dim)
         amp_normalizer = Normalizer(amp_data.observation_dim)
         discriminator = AMPDiscriminator(
             amp_data.observation_dim * 2,
@@ -272,6 +273,7 @@ class G1AMPOnPolicyRunner:
                     # Account for terminal states.
                     next_amp_obs_with_term = torch.clone(next_amp_obs)
                     next_amp_obs_with_term[reset_env_ids] = terminal_amp_states
+
 
                     rewards, task_rewards, amp_rewards, _ = self.alg.discriminator.predict_amp_reward(
                         amp_obs, next_amp_obs_with_term, rewards, normalizer=self.alg.amp_normalizer)

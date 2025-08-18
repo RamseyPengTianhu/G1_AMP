@@ -129,7 +129,7 @@ class Logger:
         plt.tight_layout()
         
         # Save the figure
-        log_dir = '/home/shanhe/AMP_for_hardware/legged_gym/data/'
+        log_dir = '/home/tianhu/AMP_for_hardware/legged_gym/data/'
         log_dir = os.path.join(log_dir, 'contact_phase')
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
@@ -166,7 +166,7 @@ class Logger:
         # plt.xticks(np.arange(0, len(value)*self.dt, 1), rotation=45)
         plt.tight_layout()
         # Save the figure
-        log_dir = '/home/shanhe/AMP_for_hardware/legged_gym/data/'
+        log_dir = '/home/tianhu/AMP_for_hardware/legged_gym/data/'
         log_dir = os.path.join(log_dir, 'test')
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
@@ -208,7 +208,7 @@ class Logger:
         # plt.show()
         # Save the figure
         # timestamp = datetime.datetime.now().strftime("%m%d-%H_%M_%S")
-        log_dir = '/home/shanhe/AMP_for_hardware/legged_gym/data/'
+        log_dir = '/home/tianhu/AMP_for_hardware/legged_gym/data/'
         log_dir = os.path.join(log_dir, 'waist_traj')
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
@@ -275,7 +275,7 @@ class Logger:
         if log["dof_torque"]!=[]: a.plot(time, log["dof_torque"], label='measured')
         a.set(xlabel='time [s]', ylabel='Joint Torque [Nm]', title='Torque')
         a.legend()
-        log_dir = '/home/shanhe/AMP_for_hardware/legged_gym/data/'
+        log_dir = '/home/tianhu/AMP_for_hardware/legged_gym/data/'
         log_dir = os.path.join(log_dir, 'plot')
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
@@ -300,7 +300,7 @@ class LoggerPD:
         self.dt = dt
         self.num_episodes = 0
         self.plot_process = None
-        self.log_dir = '/home/shanhe/unitree_rl_gym/legged_gym/data'
+        self.log_dir = '/home/tianhu/unitree_rl_gym/legged_gym/data'
         self.writer = None
 
     def log_state(self, key, value):

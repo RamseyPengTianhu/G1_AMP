@@ -156,6 +156,7 @@ class RunningMeanStd(object):
         self.mean = np.zeros(shape, np.float64)
         self.var = np.ones(shape, np.float64)
         self.count = epsilon
+        print('@@@@@@@@@shape:',shape)
 
     def update(self, arr: np.ndarray) -> None:
         batch_mean = np.mean(arr, axis=0)
@@ -198,6 +199,7 @@ class Normalizer(RunningMeanStd):
             self.var + self.epsilon, device=device, dtype=torch.float32))
         # print('mean_torch', mean_torch.shape)
         # print('std_torch', std_torch.shape)
+        # print('input.shape:',input.shape)
         return torch.clamp(
             (input - mean_torch) / std_torch, -self.clip_obs, self.clip_obs)
 

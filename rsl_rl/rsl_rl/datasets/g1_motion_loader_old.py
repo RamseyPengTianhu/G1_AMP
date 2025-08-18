@@ -1,6 +1,11 @@
 import os
 import glob
 import json
+import joblib
+import pickle
+
+
+
 import logging
 
 import torch
@@ -11,6 +16,11 @@ from rsl_rl.utils import utils
 from rsl_rl.datasets import pose3d
 from rsl_rl.datasets import motion_util
 
+from rsl_rl.utils.motion_lib.skeleton import SkeletonTree
+from rsl_rl.utils.motion_lib.motion_lib_robot import MotionLibRobot
+
+
+
 
 class AMPLoader:
 
@@ -18,6 +28,7 @@ class AMPLoader:
         """Set data index for the motion data."""
         # Constants for indexing into the motion data - specific to 36-value format
         # 3 + 4 + num_dofs + 3 + 3 + num_dofs = 55
+
         if self.datatype == "Joint":
             self.JOINT_POS_SIZE = len(self.selected_joint_indices) if self.selected_joint_indices else 29
         else:
@@ -33,8 +44,12 @@ class AMPLoader:
         self.LINEAR_VEL_SIZE = 3
         self.ANGULAR_VEL_SIZE = 3
 
-        self.KEY_POINT_POS_SIZE = 3 * 4
-        self.KEY_POINT_QUAT_SIZE = 4 * 4
+        # self.KEY_POINT_POS_SIZE = 3 * 4
+        # self.KEY_POINT_QUAT_SIZE = 4 * 4
+
+
+        self.KEY_POINT_POS_SIZE = 3 * 30
+        self.KEY_POINT_QUAT_SIZE = 0
 
         self.ROOT_POS_START_IDX = 0
         self.ROOT_POS_END_IDX = self.ROOT_POS_START_IDX + self.POS_SIZE # 3
@@ -97,59 +112,144 @@ class AMPLoader:
         for i, motion_file in enumerate(motion_files):
             self.trajectory_names.append(motion_file.split('.')[0])
             
-            # Handle different file formats - assume text file with space/comma-separated values
-            with open(motion_file, "r") as f:
-                # Try to detect if this is JSON first
-                try:
-                    motion_json = json.load(f)
-                    motion_data = np.array(motion_json["Frames"])
-                    frame_duration = float(motion_json.get("FrameDuration", 1.0/30.0))  # Default to 30fps
-                    motion_weight = float(motion_json.get("MotionWeight", 1.0))
-                except json.JSONDecodeError:
-                    # If not JSON, check file extension
-                    print(f"Loading motion data from {motion_file}")
-                    if motion_file.endswith('.csv'):
-                        # Reset file pointer and read as CSV
-                        f.seek(0)
+            motion_data = None
+            key_pos_data = None
+            frame_duration = 1.0 / 30.0
+            motion_weight = 1.0
+
+            if motion_file.endswith('.pkl'):
+                print(f"Loading motion from pickle: {motion_file}")
+                with open(motion_file, "rb") as f:
+                    data = joblib.load(f)
+                    # print('data:',data)
+                    print("Available keys:", list(data.keys()))
+                    print('dof_pos.shape:', data["dof_pos"].shape)
+                    print('root_pos.shape:', data["root_pos"].shape)
+                    print('root_rot.shape:', data["root_rot"].shape)
+                    print('keypoints.shape:', data["local_body_pos"].shape)
+                    print('link_body_list:', data["link_body_list"])
+
+                    if "root_pos" in data and "root_rot" in data and "dof_pos" in data:
+                        # ====== Your Robot Motion Format ======
+                        root_pos = data["root_pos"]
+                        # root_rot = data["root_rot"][:, [3, 0, 1, 2]]  # xyzw -> wxyz
+                        root_rot = data["root_rot"]  # xyzw -> wxyz
+                        dof_pos = data["dof_pos"]
+                        keypoints = data["local_body_pos"]  # ✅ 你需要加这一句，或其他类似名字（要确保存在）
+                        link_body_list = data["link_body_list"]
+
+                        excluded_links = ["left_toe_link", "right_toe_link", "head_mocap", "imu_in_torso", 'right_rubber_hand', 'left_rubber_hand', 'pelvis_contour_link', 'head_link']
+
+                        # 找出要保留的索引
+                        included_indices = [i for i, name in enumerate(link_body_list) if name not in excluded_links]
+                        filtered_keypoints = keypoints[:, included_indices, :]
+                        filtered_link_body_list = [link_body_list[i] for i in included_indices]
+
+                        # ==== Step 3: replace
+                        keypoints = filtered_keypoints
+                        keypoints = keypoints.reshape(keypoints.shape[0], -1)
+
+                        link_body_list = filtered_link_body_list
+
+                        fps = data.get("fps", 30.0)
+                        T = len(root_pos)
                         motion_data = []
-                        key_pos_data = []
-                        for line in f:
-                            # Split by comma and convert to float
-                            values = [float(x) for x in line.strip().split(',')]
-                            if len(values) == 36 + self.KEY_POINT_POS_SIZE + self.KEY_POINT_QUAT_SIZE:  # Ensure line has expected number of values
-                                motion_data.append(values[:7])
-                                for j in self.selected_joint_indices:
-                                    # # Append the joint positions for the selected indices
-                                    # if j == 13:
-                                    #     # Special case for 13th joint, which is the waist roll joint
-                                    #     motion_data[-1].append(values[j+7] * 0.1)
-                                    # else:
-                                    #     # For other joints, append normally
-                                    #     motion_data[-1].append(values[j+7])
-                                    motion_data[-1].append(values[j+7])
-                                    # add random noise to joint positions
-                                    # sigma = np.deg2rad(10)
-                                    # motion_data[-1].append(values[j+7] + np.random.normal(0, sigma))
-                                key_pos_data.append(values[36:])
+                        root_data = []
+                        for t in range(T):
+                            frame = []
+                            # root_pos_frame = []
+                            # root_rot_frame
+                            frame.extend(root_pos[t])
+                            frame.extend(root_rot[t])
+                            for j in self.selected_joint_indices:
+                                frame.append(dof_pos[t][j])
+                            root_data.append(frame)
+                            motion_data.append(frame)
+                            
+                        root_data = np.array(motion_data)
+                        motion_data = np.array(motion_data)
+                        frame_duration = 1.0 / fps
+                        motion_weight = 1.0
+                        key_pos_data = np.zeros((T, self.KEY_POINT_POS_SIZE))
                     else:
-                        # Assume it's a text file with space-separated values
-                        f.seek(0)
-                        next(f)
-                        lines = f.readlines()
-                        motion_data = []
-                        for line in lines:
-                            # Clean the line and split by whitespace
-                            values = [float(x) for x in line.strip().split(',')]
-                            motion_data.append(values)
+                        raise ValueError(f"Unsupported .pkl format: {motion_file}")
+
+            elif motion_file.endswith('.json'):
+                with open(motion_file, "r") as f:
+                    try:
+                        motion_json = json.load(f)
+                        motion_data = np.array(motion_json["Frames"])
+                        key_pos_data = np.array(motion_json.get("Keypoints", np.zeros((len(motion_data), self.KEY_POINT_POS_SIZE + self.KEY_POINT_QUAT_SIZE))))
+                        frame_duration = float(motion_json.get("FrameDuration", 1.0/30.0))
+                        motion_weight = float(motion_json.get("MotionWeight", 1.0))
+                    except json.JSONDecodeError:
+                        raise ValueError(f"Invalid JSON motion file: {motion_file}")
+
+            elif motion_file.endswith('.csv'):
+                with open(motion_file, "r") as f:
+                    motion_data = []
+                    key_pos_data = []
+                    for line in f:
+                        values = [float(x) for x in line.strip().split(',')]
+                        if len(values) == 36 + self.KEY_POINT_POS_SIZE + self.KEY_POINT_QUAT_SIZE:
+                            motion_data.append(values[:7])
+                            for j in self.selected_joint_indices:
+                                motion_data[-1].append(values[j + 7])
+                            key_pos_data.append(values[36:])
                     motion_data = np.array(motion_data)
                     key_pos_data = np.array(key_pos_data)
-                    frame_duration = 1.0/30.0  # Assume 30fps for text files
+                    frame_duration = 1.0 / 30.0
                     motion_weight = 1.0
-            if self.datatype == "Joint":
-                self.get_joint_data(motion_data, key_pos_data, device, frame_duration, motion_weight, motion_file, i)
-            elif self.datatype == "Cartesian":
-                self.get_cartesian_data(motion_data, key_pos_data, device, frame_duration, motion_weight, motion_file, i)
 
+            elif motion_file.endswith('.txt'):
+                with open(motion_file, "r") as f:
+                    next(f)  # skip header
+                    lines = f.readlines()
+                    motion_data = []
+                    for line in lines:
+                        values = [float(x) for x in line.strip().split(',')]
+                        motion_data.append(values)
+                    motion_data = np.array(motion_data)
+                    key_pos_data = np.zeros((motion_data.shape[0], self.KEY_POINT_POS_SIZE + self.KEY_POINT_QUAT_SIZE))
+                    frame_duration = 1.0 / 30.0
+                    motion_weight = 1.0
+
+            else:
+                raise ValueError(f"Unsupported motion file format: {motion_file}")
+
+            print('self.datatype:',self.datatype)
+
+            # Dispatch to processing function
+            # if self.datatype == "Joint":
+            #     print('joint')
+            #     self.get_joint_data(motion_data, key_pos_data, device, frame_duration, motion_weight, motion_file, i)
+            # elif self.datatype == "Cartesian":
+            #     print('Cartesian')
+
+            #     self.get_cartesian_data(motion_data, key_pos_data, device, frame_duration, motion_weight, motion_file, i)
+            #     self.get_joint_data(motion_data, key_pos_data, device, frame_duration, motion_weight, motion_file, i)
+            print(f"[DEBUG] Adding motion file: {motion_file}")
+            print(f"[DEBUG] motion_data.shape = {motion_data.shape}")
+            print(f"[DEBUG] key_pos_data.shape = {keypoints.shape}")
+
+            before_len = len(self.trajectory_weights)
+            self.get_combined_motion_data(
+                motion_data=motion_data,
+                key_pos_data=keypoints,
+                device=device,
+                frame_duration=frame_duration,
+                motion_weight=motion_weight,
+                motion_file=motion_file,
+                i=i
+            )
+
+            after_len = len(self.trajectory_weights)
+            if after_len == before_len:
+                print(f"[WARNING] motion file {motion_file} was ignored by get_combined_motion_data()")
+
+
+        print('self.datatype:',self.datatype)
+        print('self.trajectory_weights:',self.trajectory_weights)
         # Handle empty trajectory case
         if not self.trajectory_weights:
             raise ValueError("No valid motion files were loaded")
@@ -174,6 +274,9 @@ class AMPLoader:
             times = self.traj_time_sample_batch(traj_idxs)
             self.preloaded_s = self.get_full_frame_at_time_batch(traj_idxs, times)
             self.preloaded_s_next = self.get_full_frame_at_time_batch(traj_idxs, times + self.time_between_frames)
+            print('self.preloaded_s.shape:',self.preloaded_s.shape)
+            print('self.preloaded_s_next.shape:',self.preloaded_s_next.shape)
+            
             print(f'Finished preloading')
 
         self.all_trajectories_full = torch.vstack(self.trajectories_full) if self.trajectories_full else torch.tensor([])
@@ -263,6 +366,10 @@ class AMPLoader:
         #     joint_data = joint_data[:, self.selected_joint_indices]  # 只选中指定索引
         # else:
         # joint_data = motion_data[:, self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX]
+
+        # self.trajectories.append(torch.tensor(
+        #     motion_data[:, self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX],
+        #     dtype=torch.float32, device=device))
 
         self.trajectories.append(torch.tensor(
             motion_data[:, self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX],
@@ -426,6 +533,141 @@ class AMPLoader:
 
         print(f"Loaded {traj_len}s motion from {motion_file}.")
 
+
+
+    def get_combined_motion_data(self, motion_data, key_pos_data, device, frame_duration, motion_weight, motion_file, i):
+        """统一版本，合并了 joint data 和 cartesian data 的处理逻辑。"""
+        print('motion_data.shape:',motion_data.shape)
+        # 标准化 root 旋转
+        for f_i in range(motion_data.shape[0]):
+            root_rot = self.get_root_rot(motion_data[f_i])
+            root_rot = pose3d.QuaternionNormalize(root_rot)
+            root_rot = motion_util.standardize_quaternion(root_rot)
+            motion_data[f_i, self.ROOT_ROT_START_IDX:self.ROOT_ROT_END_IDX] = root_rot
+        # Velocity 计算准备
+        frame_rate = 30.0
+        dt = 1.0 / frame_rate
+        N = motion_data.shape[0]
+
+        lin_vel = np.zeros((N, self.LINEAR_VEL_SIZE))
+        ang_vel = np.zeros((N, self.ANGULAR_VEL_SIZE))
+        joint_vel = np.zeros((N, self.JOINT_VEL_SIZE))
+        torso_ang_vel = np.zeros((N, 3))
+
+        if N > 1:
+            for f_i in range(1, N):
+                pos_curr = self.get_root_pos(motion_data[f_i])
+                pos_prev = self.get_root_pos(motion_data[f_i - 1])
+                lin_vel[f_i] = (pos_curr - pos_prev) / dt
+
+                quat_curr = self.get_root_rot(motion_data[f_i])
+                quat_prev = self.get_root_rot(motion_data[f_i - 1])
+                quat_diff = transformations.quaternion_multiply(
+                    quat_curr, transformations.quaternion_inverse(quat_prev)
+                )
+                axis, angle = pose3d.QuaternionToAxisAngle(quat_diff)
+                if angle > np.pi:
+                    angle = 2 * np.pi - angle
+                    axis = -axis
+                ang_vel[f_i] = axis * angle / dt
+
+                # torso angular velocity（cartesian 特有）
+                if hasattr(self, "get_torso_pose"):
+                    quat_torso_curr = self.get_torso_pose(root_data[f_i])
+                    quat_torso_prev = self.get_torso_pose(root_data[f_i - 1])
+                    torso_diff = transformations.quaternion_multiply(
+                        quat_torso_curr, transformations.quaternion_inverse(quat_torso_prev)
+                    )
+                    t_axis, t_angle = pose3d.QuaternionToAxisAngle(torso_diff)
+                    if t_angle > np.pi:
+                        t_angle = 2 * np.pi - t_angle
+                        t_axis = -t_axis
+                    torso_ang_vel[f_i] = t_axis * t_angle / dt
+
+                # joint velocity（joint 特有）
+                joint_curr = self.get_joint_pose(motion_data[f_i])
+                joint_prev = self.get_joint_pose(motion_data[f_i - 1])
+                joint_vel[f_i] = (joint_curr - joint_prev) / dt
+
+            # 第一帧复制第二帧
+            lin_vel[0] = lin_vel[1]
+            ang_vel[0] = ang_vel[1]
+            joint_vel[0] = joint_vel[1]
+            if hasattr(self, "get_torso_pose"):
+                torso_ang_vel[0] = torso_ang_vel[1]
+
+        # 存入 tensor
+        self.lin_vel = torch.tensor(lin_vel, dtype=torch.float32, device=device)
+        self.ang_vel = torch.tensor(ang_vel, dtype=torch.float32, device=device)
+        self.joint_vel = torch.tensor(joint_vel, dtype=torch.float32, device=device)
+
+        # trajectory（含 torso_vel）
+        joint_end = self.TORSO_VEL_END_IDX if hasattr(self, "get_torso_pose") else self.JOINT_POS_END_IDX
+        self.trajectories.append(torch.tensor(
+            motion_data[:, self.JOINT_POS_START_IDX:joint_end],
+            dtype=torch.float32, device=device
+        ))
+        print('key_pos_data.shape:', key_pos_data.shape)
+        # 扩展 motion 数据拼接
+        # total_extra_dim = self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE + self.JOINT_VEL_SIZE + key_pos_data.shape[1]
+        # total_extra_dim = self.JOINT_VEL_SIZE
+        # joint_extra_dim = self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE
+        # root_extra_dim = self.POS_SIZE + self.ROT_SIZE + self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE
+        # extended_motion_data = np.zeros((N, motion_data.shape[1] + Joint_extra_dim + root_extra_dim))
+        # extended_motion_data = np.zeros((N, motion_data.shape[1]))
+        # extended_motion_data[:, :self.POS_SIZE] = self.root_pos
+        # extended_motion_data[:, self.POS_SIZE:self.POS_SIZE + self.ROT_SIZE] = self.root_rot
+        # extended_motion_data[:, self.POS_SIZE + self.ROT_SIZE:self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE] = motion_data
+        # extended_motion_data[:, self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE:self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE + self.LINEAR_VEL_SIZE] = self.lin_vel
+        # extended_motion_data[:, self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE + self.JOINT_POS_SIZE + self.LINEAR_VEL_SIZE:self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE + self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE] = self.ang_vel
+        # extended_motion_data[:, self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE + self.JOINT_POS_SIZE + self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE:self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE + self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE + self.JOINT_VEL_SIZE] = joint_vel
+        # extended_motion_data[:, self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE + self.JOINT_POS_SIZE + self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE + self.JOINT_VEL_SIZE:self.POS_SIZE + self.ROT_SIZE + self.JOINT_POS_SIZE + self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE] = key_pos_data
+
+        # extended_motion_data[:, :motion_data.shape[1]] = motion_data
+
+        # extended_motion_data[:, motion_data.shape[1]:motion_data.shape[1] + self.JOINT_VEL_SIZE] = joint_vel
+        # extended_motion_data[:, motion_data.shape[1] + self.JOINT_VEL_SIZE :motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE] = key_pos_data
+
+
+        # extended_motion_data[:, motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE:motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE + self.POS_SIZE] = self.root_pos
+        # extended_motion_data[:, motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE + self.POS_SIZE:motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE + self.POS_SIZE + self.ROT_SIZE] = self.root_rot
+        # extended_motion_data[:, motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE + self.POS_SIZE + self.ROT_SIZE:motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE + self.POS_SIZE + self.ROT_SIZE + self.LINEAR_VEL_SIZE] = self.lin_vel
+        # extended_motion_data[:, motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE + self.POS_SIZE + self.ROT_SIZE + self.LINEAR_VEL_SIZE:motion_data.shape[1] + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE + self.POS_SIZE + self.ROT_SIZE + self.LINEAR_VEL_SIZE + self.LINEAR_VEL_SIZE] = self.ang_vel
+        # extended_motion_data[:, self.ANGULAR_VEL_START_IDX:self.ANGULAR_VEL_END_IDX] = ang_vel
+        # extended_motion_data[:, self.JOINT_VEL_START_IDX:self.JOINT_VEL_END_IDX] = joint_vel
+        # extended_motion_data[:, self.KEY_POINT_POS_START_IDX:self.KEY_POINT_POS_END_IDX] = key_pos_data
+        # print('extended_motion_data.shape:',extended_motion_data.shape)
+        # self.extended_traj.append(torch.tensor(
+        #     extended_motion_data[:, self.JOINT_POS_START_IDX:],
+        #     dtype=torch.float32, device=device
+        # ))
+        extended_motion_data = np.zeros((motion_data.shape[0], motion_data.shape[1] + self.LINEAR_VEL_SIZE + self.ANGULAR_VEL_SIZE + self.JOINT_VEL_SIZE + key_pos_data.shape[1]))
+        extended_motion_data[:, :motion_data.shape[1]] = motion_data  # Original data
+        # Fill in the rest of the extended motion data
+        print(f"Extended motion data shape: {extended_motion_data.shape}")
+        # Add velocities
+        extended_motion_data[:, self.LINEAR_VEL_START_IDX:self.LINEAR_VEL_END_IDX] = lin_vel
+        extended_motion_data[:, self.ANGULAR_VEL_START_IDX:self.ANGULAR_VEL_END_IDX] = ang_vel
+        extended_motion_data[:, self.JOINT_VEL_START_IDX:self.JOINT_VEL_END_IDX] = joint_vel
+        # Add key point positions and orientations to the end of the extended motion data
+        extended_motion_data[:, self.KEY_POINT_POS_START_IDX:self.KEY_POINT_QUAT_END_IDX] = key_pos_data
+
+        self.extended_traj.append(torch.tensor(
+            extended_motion_data[:, self.JOINT_POS_START_IDX:],
+            dtype=torch.float32, device=device
+        ))
+        # print('extended_motion_data:',extended_motion_data.shape)
+        self.trajectories_full.append(torch.tensor(extended_motion_data, dtype=torch.float32, device=device))
+
+        self.trajectory_idxs.append(i)
+        self.trajectory_weights.append(motion_weight)
+        self.trajectory_frame_durations.append(frame_duration)
+        traj_len = (N - 1) * frame_duration
+        self.trajectory_lens.append(traj_len)
+        self.trajectory_num_frames.append(float(N))
+
+        print(f"Loaded {traj_len:.2f}s motion from {motion_file}.")
+
     def get_root_pos(self, pose):
         """Get root position from a pose vector."""
         return pose[self.ROOT_POS_START_IDX:self.ROOT_POS_END_IDX]
@@ -444,11 +686,22 @@ class AMPLoader:
 
     def get_joint_pose(self, pose):
         """Get joint poses from a pose vector."""
+        # return pose[self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX]
         return pose[self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX]
+        # return pose[0:self.JOINT_POS_SIZE]
+
 
     def get_joint_pose_batch(self, poses):
         """Get joint poses from a batch of pose vectors."""
+        # print('JOINT_POS_START_IDX:',self.JOINT_POS_START_IDX)
+        # print('JOINT_POS_END_IDX:',self.JOINT_POS_END_IDX)
+        # print('poses.shape:',poses.shape)
+        # print('poses[:, self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX].shape:',poses[:, self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX].shape)
+        # print('poses[:, :].shape:',poses[:, :].shape)
         return poses[:, self.JOINT_POS_START_IDX:self.JOINT_POS_END_IDX]
+        # return poses[:, :self.JOINT_POS_SIZE]
+        
+        # return poses[:, :]
 
     def get_linear_vel(self, pose):
         return pose[self.LINEAR_VEL_START_IDX:self.LINEAR_VEL_END_IDX]
@@ -463,10 +716,20 @@ class AMPLoader:
         return poses[:, self.ANGULAR_VEL_START_IDX:self.ANGULAR_VEL_END_IDX]
     
     def get_joint_vel(self, pose):
+        # return pose[self.JOINT_POS_SIZE:self.JOINT_POS_SIZE + self.JOINT_VEL_SIZE]
         return pose[self.JOINT_VEL_START_IDX:self.JOINT_VEL_END_IDX]
+
 
     def get_joint_vel_batch(self, poses):
         return poses[:, self.JOINT_VEL_START_IDX:self.JOINT_VEL_END_IDX]
+        # return poses[:, self.JOINT_POS_SIZE:self.JOINT_POS_SIZE + self.JOINT_VEL_SIZE]
+
+    def get_keybody_pos(self, pose):
+        return pose[self.KEY_POINT_POS_START_IDX:self.KEY_POINT_QUAT_END_IDX]
+
+    def get_keybody_pos_batch(self, poses):
+        return poses[:, self.KEY_POINT_POS_START_IDX:self.KEY_POINT_QUAT_END_IDX]
+        # return poses[:, self.JOINT_POS_SIZE + self.JOINT_VEL_SIZE:self.JOINT_POS_SIZE + self.JOINT_VEL_SIZE + self.KEY_POINT_POS_SIZE]
 
     def weighted_traj_idx_sample(self):
         """Get traj idx via weighted sampling."""
@@ -564,8 +827,8 @@ class AMPLoader:
         all_frame_joint_ends = torch.zeros(len(traj_idxs), self.JOINT_POS_SIZE, device=self.device)
         all_frame_key_pos_starts = torch.zeros(len(traj_idxs), self.KEY_POINT_POS_SIZE, device=self.device)
         all_frame_key_pos_ends = torch.zeros(len(traj_idxs), self.KEY_POINT_POS_SIZE, device=self.device)
-        all_frame_key_quat_starts = torch.zeros(len(traj_idxs), self.KEY_POINT_QUAT_SIZE, device=self.device)
-        all_frame_key_quat_ends = torch.zeros(len(traj_idxs), self.KEY_POINT_QUAT_SIZE, device=self.device)
+        # all_frame_key_quat_starts = torch.zeros(len(traj_idxs), self.KEY_POINT_QUAT_SIZE, device=self.device)
+        # all_frame_key_quat_ends = torch.zeros(len(traj_idxs), self.KEY_POINT_QUAT_SIZE, device=self.device)
 
         # For velocities
         all_frame_lin_vel_starts = torch.zeros(len(traj_idxs), self.LINEAR_VEL_SIZE, device=self.device)
@@ -586,7 +849,8 @@ class AMPLoader:
             
             all_frame_rot_starts[traj_mask] = self.get_root_rot_batch(trajectory[idx_low[traj_mask]])
             all_frame_rot_ends[traj_mask] = self.get_root_rot_batch(trajectory[idx_high[traj_mask]])
-            
+            # print('all_frame_joint_starts.shape:',all_frame_joint_starts.shape)
+            # print('get_joint_pose_batch.shape:',self.get_joint_pose_batch(trajectory[idx_low[traj_mask]]).shape)
             all_frame_joint_starts[traj_mask] = self.get_joint_pose_batch(trajectory[idx_low[traj_mask]])
             all_frame_joint_ends[traj_mask] = self.get_joint_pose_batch(trajectory[idx_high[traj_mask]])
 
@@ -601,11 +865,12 @@ class AMPLoader:
             all_frame_joint_vel_ends[traj_mask] = self.get_joint_vel_batch(trajectory[idx_high[traj_mask]])
 
             # Extract key point positions and orientations
-            all_frame_key_pos_starts[traj_mask] = trajectory[idx_low[traj_mask], self.KEY_POINT_POS_START_IDX:self.KEY_POINT_POS_END_IDX]
-            all_frame_key_pos_ends[traj_mask] = trajectory[idx_high[traj_mask], self.KEY_POINT_POS_START_IDX:self.KEY_POINT_POS_END_IDX]
+            all_frame_key_pos_starts[traj_mask] = self.get_keybody_pos_batch(trajectory[idx_low[traj_mask]])
+            all_frame_key_pos_ends[traj_mask] = self.get_keybody_pos_batch(trajectory[idx_high[traj_mask]])
+
             
-            all_frame_key_quat_starts[traj_mask] = trajectory[idx_low[traj_mask], self.KEY_POINT_QUAT_START_IDX:self.KEY_POINT_QUAT_END_IDX]
-            all_frame_key_quat_ends[traj_mask] = trajectory[idx_high[traj_mask], self.KEY_POINT_QUAT_START_IDX:self.KEY_POINT_QUAT_END_IDX]
+            # all_frame_key_quat_starts[traj_mask] = trajectory[idx_low[traj_mask], self.KEY_POINT_QUAT_START_IDX:self.KEY_POINT_QUAT_END_IDX]
+            # all_frame_key_quat_ends[traj_mask] = trajectory[idx_high[traj_mask], self.KEY_POINT_QUAT_START_IDX:self.KEY_POINT_QUAT_END_IDX]
 
         
         blend = torch.tensor(p * n - idx_low, device=self.device, dtype=torch.float32).unsqueeze(-1)
@@ -625,8 +890,8 @@ class AMPLoader:
 
         # Key point positions and orientations
         key_pos_blend = self.slerp(all_frame_key_pos_starts, all_frame_key_pos_ends, blend)
-        key_quat_blend = self.slerp(all_frame_key_quat_starts, all_frame_key_quat_ends, blend)
-        
+        # key_quat_blend = self.slerp(all_frame_key_quat_starts, all_frame_key_quat_ends, blend)
+
         if self.datatype == "Cartesian":
             # Combine all components
             return torch.cat([
@@ -637,7 +902,6 @@ class AMPLoader:
                 ang_vel_blend, 
                 joint_vel_blend,
                 key_pos_blend,
-                key_quat_blend
             ], dim=-1)
         else:
             return torch.cat([
@@ -648,7 +912,6 @@ class AMPLoader:
                 ang_vel_blend,
                 joint_vel_blend,
                 key_pos_blend,
-                key_quat_blend
             ], dim=-1)
 
     def get_frame(self):
@@ -670,6 +933,7 @@ class AMPLoader:
                 self.preloaded_s.shape[0], size=num_frames)
             return self.preloaded_s[idxs]
         else:
+
             traj_idxs = self.weighted_traj_idx_sample_batch(num_frames)
             times = self.traj_time_sample_batch(traj_idxs)
             return self.get_full_frame_at_time_batch(traj_idxs, times)
@@ -685,6 +949,7 @@ class AMPLoader:
         Returns:
             An interpolation of the two frames.
         """
+
         # Get original frame data
         root_pos0, root_pos1 = self.get_root_pos(frame0), self.get_root_pos(frame1)
         root_rot0, root_rot1 = self.get_root_rot(frame0), self.get_root_rot(frame1)
@@ -739,7 +1004,9 @@ class AMPLoader:
                     self.preloaded_s.shape[0], size=mini_batch_size)
                 
                 # Get only the joint positions for the state
+                # s = self.preloaded_s[idxs, :]
                 s = self.preloaded_s[idxs, self.JOINT_POS_START_IDX:]
+
 
                 # Add root height (Z coordinate)
                 s = torch.cat([
@@ -751,7 +1018,10 @@ class AMPLoader:
                 s_next = torch.cat([
                     s_next,
                     self.preloaded_s_next[idxs, self.ROOT_POS_START_IDX + 2:self.ROOT_POS_START_IDX + 3]], dim=-1)
+              
             else:
+
+
                 s, s_next = [], []
                 traj_idxs = self.weighted_traj_idx_sample_batch(mini_batch_size)
                 times = self.traj_time_sample_batch(traj_idxs)
@@ -767,7 +1037,6 @@ class AMPLoader:
                     # Append joint positions and root height
                     s.append(torch.cat([frame, full_frame[self.ROOT_POS_START_IDX + 2:self.ROOT_POS_START_IDX + 3]]))
                     s_next.append(torch.cat([next_frame, full_next_frame[self.ROOT_POS_START_IDX + 2:self.ROOT_POS_START_IDX + 3]]))
-                
                 s = torch.stack(s)
                 s_next = torch.stack(s_next)
             yield s, s_next
@@ -784,7 +1053,44 @@ class AMPLoader:
                     quat_wb)[:3]
         return rotated
 
+
+
+    def load_robot_motion(self, motion_file):
+        """
+        Load robot motion data from a pickle file.
+        """
+        with open(motion_file, "rb") as f:
+            motion_data = pickle.load(f)
+            motion_fps = motion_data["fps"]
+            motion_root_pos = motion_data["root_pos"]
+            motion_root_rot = motion_data["root_rot"][:, [3, 0, 1, 2]] # from xyzw to wxyz
+            motion_dof_pos = motion_data["dof_pos"]
+            motion_local_body_pos = motion_data["local_body_pos"]
+            motion_link_body_list = motion_data["link_body_list"]
+        return motion_data, motion_fps, motion_root_pos,motion_root_rot, motion_dof_pos, motion_local_body_pos, motion_link_body_list
+
+
+
     @property
     def observation_dim(self):
         """Size of AMP observations."""
-        return self.extended_traj[0].shape[1] + 1 # Joint positions + lin_vel + ang_vel+ root height
+        return self.extended_traj[0].shape[1] # Joint positions + lin_vel + ang_vel+ root height
+
+
+
+
+class CompatibleUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        # 重定向 numpy._core → numpy.core
+        if module.startswith("numpy._core"):
+            module = module.replace("numpy._core", "numpy.core")
+        return super().find_class(module, name)
+
+def load_joblib_compatible(path):
+    with open(path, "rb") as f:
+        try:
+            return joblib.load(f)
+        except ModuleNotFoundError as e:
+            print("[Warning] joblib.load failed, retrying with CompatibleUnpickler due to:", e)
+            f.seek(0)
+            return CompatibleUnpickler(f).load()

@@ -299,7 +299,7 @@ def play(args):
         #     logger.print_rewards()
 
     # # Save logged states
-    # save_states_to_csv(logger.state_log, env.dt, '/home/shanhe/unitree_rl_gym/data/bruce/PD_Gain_setting_play')
+    # save_states_to_csv(logger.state_log, env.dt, '/home/tianhu/unitree_rl_gym/data/bruce/PD_Gain_setting_play')
 
 
 if __name__ == '__main__':
@@ -320,9 +320,9 @@ if __name__ == '__main__':
     args.amplitude = 0  # Amplitude of the sine wave
     args.frequency = 0  # Frequency of the sine wave (Hz)
     args.constant = 0.5  # Constant offset for the sine wave
-    args.log_dir = '/home/shanhe/AMP_for_hardware/legged_gym/data/g1_amp/PD_Gain_setting_play'
+    args.log_dir = '/home/tianhu/AMP_for_hardware/legged_gym/data/g1_amp/PD_Gain_setting_play'
     args.p_gain = 30.0
     args.d_gain = 0
-    #tensorboard --logdir=/home/shanhe/AMP_for_hardware/legged_gym/data/g1_amp/PD_Gain_setting_play
+    #tensorboard --logdir=/home/tianhu/AMP_for_hardware/legged_gym/data/g1_amp/PD_Gain_setting_play
     #python legged_gym/scripts/PD_Gain_setting_play.py --headless
     play(args)

@@ -262,7 +262,10 @@ class G1LeggedRobot(BaseTask):
         if self.cfg.env.reference_state_initialization and random.random() < self.cfg.env.reference_state_initialization_prob:
             frames = self.amp_loader.get_full_frame_batch(len(env_ids))
             self._reset_dofs_amp(env_ids, frames)
-            self._reset_root_states_amp(env_ids, frames)
+            # self._reset_root_states_amp(env_ids, frames)
+            self._reset_root_states(env_ids)
+
+
         else:
             self._reset_dofs(env_ids)
             self._reset_root_states(env_ids)
@@ -277,7 +280,7 @@ class G1LeggedRobot(BaseTask):
             self.randomized_p_gains[env_ids] = new_randomized_gains[0]
             self.randomized_d_gains[env_ids] = new_randomized_gains[1]
 
-        self._reset_target_pos(env_ids)
+        # self._reset_target_pos(env_ids)
 
         # reset buffers
         self.last_actions[env_ids] = 0.
@@ -379,7 +382,7 @@ class G1LeggedRobot(BaseTask):
 
             local_key_body_pos = world_key_body_pose - self.root_states[:, 0:3].unsqueeze(1)  # (N,K,3)
             local_key_body_vel = world_key_body_vel - self.root_states[:, 7:10].unsqueeze(1)  # (N,K,3)
-            local_link_quat = quat_mul(base_q_inv, world_key_body_quat) # (N,K,4) 
+            # local_link_quat = quat_mul(base_q_inv, world_key_body_quat) # (N,K,4) 
 
             # 展平
             flat_end_pos = local_key_body_pos.view(N*K, 3)            # (N*K,3)
@@ -392,9 +395,21 @@ class G1LeggedRobot(BaseTask):
 
             # 再恢复 (N, K*3)
             flat_local_key_pos = local_end_pos.view(N, K*3)
-            flat_local_link_quat = local_link_quat.reshape(N, K * 4)  # (N,K*4)
+            # print('joint_pos.shape:',joint_pos.shape)
+            # print('base_lin_vel.shape:',base_lin_vel.shape)
+            # print('joint_vel.shape:',joint_vel.shape)
+            # print('flat_local_key_pos.shape:',flat_local_key_pos.shape)
+            # print('z_pos.shape:',z_pos.shape)
+            # flat_local_link_quat = local_link_quat.reshape(N, K * 4)  # (N,K*4)
 
-            return torch.cat((joint_pos, base_lin_vel, base_ang_vel, joint_vel, flat_local_key_pos, flat_local_link_quat, z_pos), dim=-1)
+            return torch.cat((joint_pos, base_lin_vel, base_ang_vel, joint_vel, flat_local_key_pos), dim=-1)
+            # return torch.cat((joint_pos), dim=-1)
+            # return joint_pos
+            # return flat_local_key_pos
+            
+            # return torch.cat((joint_pos, joint_vel, flat_local_key_pos), dim=-1)
+            # return torch.cat((joint_pos, joint_vel, flat_local_key_pos), dim=-1)
+
         elif self.cfg.env.data_type == 'cartesian' or self.cfg.env.data_type == 'joints_and_cartesian':
             N = self.num_envs
             K = len(self.cartesian_data_link_indices)
@@ -566,7 +581,7 @@ class G1LeggedRobot(BaseTask):
             self._linear_commands(env_ids)
         else:
             self._resample_commands(env_ids)
-        self._reset_target_pos(env_ids)
+        # self._reset_target_pos(env_ids)
         if self.cfg.commands.heading_command:
             forward = quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
@@ -682,8 +697,11 @@ class G1LeggedRobot(BaseTask):
         if torch.isnan(frames).any():
             print("NaN in AMP frames!")
             frames = torch.nan_to_num(frames)
+
+        # print('self.dof_pos:',self.dof_pos.shape)
+        # print('self.self.amp_loader.get_joint_pose_batch:',self.amp_loader.get_joint_pose_batch(frames).shape)
         self.dof_pos[env_ids] = self.amp_loader.get_joint_pose_batch(frames)
-        self.dof_vel[env_ids] = self.amp_loader.get_joint_vel_batch(frames)
+        # self.dof_vel[env_ids] = self.amp_loader.get_joint_vel_batch(frames)
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_dof_state_tensor_indexed(self.sim,
                                               gymtorch.unwrap_tensor(self.dof_state),
@@ -724,8 +742,8 @@ class G1LeggedRobot(BaseTask):
         self.root_states[env_ids, :3] = root_pos
         root_orn = self.amp_loader.get_root_rot_batch(frames)
         self.root_states[env_ids, 3:7] = root_orn
-        self.root_states[env_ids, 7:10] = quat_rotate(root_orn, self.amp_loader.get_linear_vel_batch(frames))
-        self.root_states[env_ids, 10:13] = quat_rotate(root_orn, self.amp_loader.get_angular_vel_batch(frames))
+        # self.root_states[env_ids, 7:10] = quat_rotate(root_orn, self.amp_loader.get_linear_vel_batch(frames))
+        # self.root_states[env_ids, 10:13] = quat_rotate(root_orn, self.amp_loader.get_angular_vel_batch(frames))
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
@@ -1089,6 +1107,10 @@ class G1LeggedRobot(BaseTask):
         # save body names from the asset
         self.body_names = self.gym.get_asset_rigid_body_names(robot_asset)
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
+        print('self.dof_names:',self.dof_names)
+        print("[ENV] dof order (len={}):".format(len(self.dof_names)))
+        for i, n in enumerate(self.dof_names):
+            print(f"{i:2d}: {n}")
         self.num_bodies = len(self.body_names)
         self.num_dofs = len(self.dof_names)
         feet_names = [s for s in self.body_names if self.cfg.asset.foot_name in s]
