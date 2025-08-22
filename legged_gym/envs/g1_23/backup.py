@@ -31,47 +31,46 @@ import glob
 
 from legged_gym.envs.base.g1_legged_robot_config import G1LeggedRobotCfg, G1LeggedRobotCfgPPO
 
-# MOTION_FILES = glob.glob('datasets/fight/*.csv')
+MOTION_FILES = glob.glob('datasets/fight/*.csv')
 # MOTION_FILES = glob.glob('datasets/joint_from_simulation/forward_1.0.csv')  # Replace with your actual path to the motion files
 CARTESIAN_MOTION_FILES = glob.glob('datasets/cartesian_with_orientation_from_simulation/forward_1.0.csv')  # Replace with your actual path to the motion files
-CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('datasets/joints_and_cartesian_from_simulation/forward_1.0.csv')
-# MOTION_FILES = glob.glob('/home/tianhu/amass/Retargeted_Data/accad_to_g1_joblib/Female1General_c3d/A5_-_pick_up_box_stageii.pkl')
-# MOTION_FILES = glob.glob('/home/tianhu/amass/Retargeted_Data/Box/')
-MOTION_FILES = glob.glob('/home/tianhu/amass/Retargeted_Data/Box/*.pkl')
-
-
-
+# CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('home/tianhu/amass/Retargeted_Data/Female1General_c3d/accad_to_g1A5_-_pick_up_box_stageii.pkl')
+# CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('/home/tianhu/amass/Retargeted_Data/accad_to_g1_joblib/Female1General_c3d/A5_-_pick_up_box_stageii.pkl')
+CARTESIAN_AND_JOINT_MOTION_FILES = glob.glob('/home/tianhu/amass/Retargeted_Data/accad_to_g1_joblib/Female1General_c3d/A15_-_skip_to_stand_stageii.pkl')
 
 
 class G123AMPCfg( G1LeggedRobotCfg ):
 
     class env( G1LeggedRobotCfg.env ):
-        # num_actions = 23
+<<<<<<< HEAD:legged_gym/envs/g1_29/g1_29_amp_config.py
         num_actions = 29
-        num_envs = 1024
+        num_envs = 500
+=======
+        num_actions = 23
+        num_envs = 2048
+>>>>>>> 0b303ae31909c5e17e0be9f417f19258a33d210e:legged_gym/envs/g1_23/g1_23_amp_config.py
         include_history_steps = None  # Number of steps of history to include.
         # 3 + 3 + 3 + 3 + 23 + 23 + 23 = 81
-        # num_observations = 78 #original amp
-        num_observations = 9 + 3 * num_actions  #original amp
-        # num_privileged_obs = 81
-        num_privileged_obs = 12 + 3 * num_actions #original amp
+        num_observations = 78 #original amp
+        num_privileged_obs = 81
         reference_state_initialization = True
         reference_state_initialization_prob = 1
-        amp_motion_files = MOTION_FILES
+        amp_motion_files = CARTESIAN_AND_JOINT_MOTION_FILES
         episode_length_s = 20 # episode length in seconds
         g1_cartesian_link_names = ["left_hip_yaw_link", "left_knee_link", "left_ankle_roll_link",  
                               "right_hip_yaw_link", "right_knee_link", "right_ankle_roll_link",
                                 "torso_link", "head_link",
                               "left_shoulder_roll_link", "left_elbow_link", "left_rubber_hand",
                               "right_shoulder_roll_link", "right_elbow_link", "right_rubber_hand"]
+<<<<<<< HEAD:legged_gym/envs/g1_29/g1_29_amp_config.py
+        key_point_names = ['pelvis', 'left_hip_pitch_link', 'left_hip_roll_link', 'left_hip_yaw_link', 'left_knee_link', 'left_ankle_pitch_link', 'left_ankle_roll_link', 
+        'right_hip_pitch_link', 'right_hip_roll_link', 'right_hip_yaw_link', 'right_knee_link', 'right_ankle_pitch_link', 'right_ankle_roll_link', 
+        'waist_yaw_link', 'waist_roll_link', 'torso_link',  'left_shoulder_pitch_link', 'left_shoulder_roll_link', 'left_shoulder_yaw_link', 'left_elbow_link', 
+        'left_wrist_roll_link', 'left_wrist_pitch_link', 'left_wrist_yaw_link', 'right_shoulder_pitch_link', 'right_shoulder_roll_link', 
+        'right_shoulder_yaw_link', 'right_elbow_link', 'right_wrist_roll_link', 'right_wrist_pitch_link', 'right_wrist_yaw_link']
+=======
         key_point_names = ["left_rubber_hand", "right_rubber_hand", "left_ankle_roll_link", "right_ankle_roll_link"]
-        # key_point_names = ['pelvis', 'left_hip_pitch_link', 'left_hip_roll_link', 'left_hip_yaw_link', 'left_knee_link', 'left_ankle_pitch_link', 'left_ankle_roll_link', 
-        # 'right_hip_pitch_link', 'right_hip_roll_link', 'right_hip_yaw_link', 'right_knee_link', 'right_ankle_pitch_link', 'right_ankle_roll_link', 
-        # 'waist_yaw_link', 'waist_roll_link', 'torso_link',  'left_shoulder_pitch_link', 'left_shoulder_roll_link', 'left_shoulder_yaw_link', 'left_elbow_link', 
-        # 'left_wrist_roll_link', 'left_wrist_pitch_link', 'left_wrist_yaw_link', 'right_shoulder_pitch_link', 'right_shoulder_roll_link', 
-        # 'right_shoulder_yaw_link', 'right_elbow_link', 'right_wrist_roll_link', 'right_wrist_pitch_link', 'right_wrist_yaw_link']
-
-        
+>>>>>>> 0b303ae31909c5e17e0be9f417f19258a33d210e:legged_gym/envs/g1_23/g1_23_amp_config.py
         data_type = 'joint'  # 'cartesian' or 'joint' or 'joints_and_cartesian'
         debug_viz = False  # whether to visualize the debug information
 
@@ -127,9 +126,9 @@ class G123AMPCfg( G1LeggedRobotCfg ):
                      'shoulder_roll': 60,
                      'shoulder_yaw': 20.,
                      'elbow': 60,
-                     'wrist_roll': 35,
-                     'wrist_pitch': 35,
-                     'wrist_yaw': 35,
+                     'wrist_roll': 10,
+                     'wrist_pitch': 20,
+                     'wrist_yaw': 20,
                      }  # [N*m/rad]
         damping = {  'hip_yaw': 2,
                      'hip_roll': 2,
@@ -143,9 +142,9 @@ class G123AMPCfg( G1LeggedRobotCfg ):
                      'shoulder_roll': 1,
                      'shoulder_yaw': 0.4,
                      'elbow': 1,
-                     'wrist_roll': 3,
-                     'wrist_pitch': 3,
-                     'wrist_yaw': 3,
+                     'wrist_roll': 0.4,
+                     'wrist_pitch': 0.2,
+                     'wrist_yaw': 0.4,
                      }  # [N*m/rad]  # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
         action_scale = 0.25
@@ -157,28 +156,20 @@ class G123AMPCfg( G1LeggedRobotCfg ):
         measure_heights = False
 
     class asset( G1LeggedRobotCfg.asset ):
-        # file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/g1_description/g1_23dof_.urdf'
-        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/g1_description/g1_29dof_.urdf'
+        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/g1_description/g1_23dof_.urdf'
         name = 'g1_amp'
         foot_name = "ankle_roll"
         penalize_contacts_on = ["head", "wrist", "elbow", "knee", "hand"]
         knee_name = "knee"
         collapse_fixed_joints = False # merge bodies connected by fixed joints. Specific fixed joints can be kept by adding " <... dont_collapse="true">
-        terminate_after_contacts_on = ["head", "knee","elbow", "shoulder", "wrist"]
+        terminate_after_contacts_on = ["head", "knee"]
         self_collisions = 0 # 1 to disable, 0 to enable...bitwise filter
         flip_visual_attachments = False
-        terminate_after_base_z = 0.25
-        # selected_joint_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-        #                             12, 13, 14,
-        #                             15, 16, 17, 18, 22, 23, 24, 25]
-
+        terminate_after_base_z = 0.4
         selected_joint_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
                                     12, 13, 14,
-                                    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
-
-        lower_body_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-                                    12, 13, 14]
-        end_effector_name = ["left_rubber_hand", "right_rubber_hand"]  # end effector name for the robot
+                                    15, 16, 17, 18, 22, 23, 24, 25]
+        end_effector_name = "right_rubber_hand"  # end effector name for the robot
         
     class domain_rand:
         randomize_friction = True
@@ -199,8 +190,6 @@ class G123AMPCfg( G1LeggedRobotCfg ):
             dof_pos = 0.03
             dof_vel = 1.0
             lin_vel = 0.1
-            lin_vel_z = 0.1
-
             ang_vel = 0.3
             gravity = 0.05
             height_measurements = 0.1
@@ -209,27 +198,72 @@ class G123AMPCfg( G1LeggedRobotCfg ):
         soft_dof_pos_limit = 0.9
         base_height_target = 0.78
         class scales( G1LeggedRobotCfg.rewards.scales ):
-            # tracking_lin_vel = 1.0
-            # tracking_lin_vel_z = 1.0
-            # tracking_ang_vel = 0.5
+<<<<<<< HEAD:legged_gym/envs/g1_29/g1_29_amp_config.py
+            # termination = 0.0
+            # tracking_lin_vel = 1.5 * 1. / (.005 * 6)
+            # tracking_ang_vel = 0.5 * 1. / (.005 * 6)
+            # lin_vel_z = 0.0
+            # ang_vel_xy = 0.0
+            # orientation = 0.0
+            # torques = 0.0
+            # dof_vel = 0.0
+            # dof_acc = 0.0
+            # base_height = 0.0 
+            # feet_air_time =  0.0
+            # collision = 0.0
+            # feet_stumble = 0.0
+            # action_rate = 0.0
+            # stand_still = 0.0
+            # dof_pos_limits = 0.0
+
+            # tracking_lin_vel = 1.5 * 1. / (.005 * 6)
+            # tracking_ang_vel = 0.5 * 1. / (.005 * 6)
+            # lin_vel_z = -2.0
+            # ang_vel_xy = -0.05
+            # orientation = -1.0
+            # base_height = -10.0
+            # dof_acc = -2.5e-7
+            # dof_vel = -1e-3
+            # feet_air_time = 0.0
+            # collision = -0.1
+            # action_rate = -0.01
+            # dof_pos_limits = -5.0
+            # alive = 0.15
+            # hip_pos = -1.0
+            # contact_no_vel = -0.2
+            # feet_swing_height = -20.0
+            # contact = 0.18
+            # straight_stance_phase = 2.0
+            # penalty_knee_hyperextension = 1.0
+            # stance_swing_coordination = 2.0
+            # swing_height = 0.5
+
+            tracking_lin_vel = 3.0
+            tracking_ang_vel = 1.0
+=======
+            tracking_lin_vel = 0.0
+            tracking_ang_vel = 0.0
+>>>>>>> 0b303ae31909c5e17e0be9f417f19258a33d210e:legged_gym/envs/g1_23/g1_23_amp_config.py
             # lin_vel_z = -2.0
             # ang_vel_xy = -0.05
             # orientation = 1.0
             # base_height = -1.0
-            # strike = 15.0
-            twohands_to_height = 15.0
+<<<<<<< HEAD:legged_gym/envs/g1_29/g1_29_amp_config.py
+            # strike = 20.0
+=======
+            strike = 15.0
+>>>>>>> 0b303ae31909c5e17e0be9f417f19258a33d210e:legged_gym/envs/g1_23/g1_23_amp_config.py
             dof_acc = -2.5e-7
             dof_vel = -1e-3
             feet_air_time = 0.0
-            # collision = -0.5
-            collision = -0.75
+            collision = -0.5
             action_rate = -0.01
             dof_pos_limits = -2.0
 
     class commands:
         curriculum = False
         max_curriculum = 1.
-        num_commands = 5 # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
+        num_commands = 4 # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         resampling_time = 5. # time before command are changed[s]
         heading_command = False # if true: compute ang vel command from heading error
         linear_increasing_commands_for_play = False # if true: increase the linear velocity commands during play
@@ -238,22 +272,26 @@ class G123AMPCfg( G1LeggedRobotCfg ):
             lin_vel_x = [-0.8, 2.0] # min max [m/s]
             lin_vel_y = [-0.9, 0.9]   # min max [m/s]
             ang_vel_yaw = [-1.57, 1.57]    # min max [rad/s]
-
-            lin_vel_x = [0., 0] # min max [m/s]
-            lin_vel_y = [0, 0]   # min max [m/s]
-            ang_vel_yaw = [0, 0]    # min max [rad/s]
             heading = [-3.14, 3.14]
-            lin_vel_z = [0.3, 0.82]
+<<<<<<< HEAD:legged_gym/envs/g1_29/g1_29_amp_config.py
+            # target_radius = [0.8, 1.2] # min max [m]
+            # target_theta = [-1, 1] # min max [rad]
+            # target_z = 1.0 # min max [m]
+
+
+    # class sim( G1LeggedRobotCfg.sim ):
+    #     dt = 0.005
+=======
             target_radius = [0.8, 6.0] # min max [m]
             target_theta = [-1.0, 1.0] # min max [rad]
-            target_z = [0.3, 1.0] # min max [m]
+            target_z = [0.8, 1.3] # min max [m]
+>>>>>>> 0b303ae31909c5e17e0be9f417f19258a33d210e:legged_gym/envs/g1_23/g1_23_amp_config.py
 
 class G123AMPCfgPPO( G1LeggedRobotCfgPPO ):
     runner_class_name = 'G1AMPOnPolicyRunner'
     class algorithm( G1LeggedRobotCfgPPO.algorithm ):
         entropy_coef = 0.005 # 0.005 for cartesian, 0.015 for joint space
-        # amp_replay_buffer_size = 2000000
-        amp_replay_buffer_size = 500000
+        amp_replay_buffer_size = 1000000
         num_learning_epochs = 5
         num_mini_batches = 4
         gamma = 0.99
@@ -309,15 +347,15 @@ class G123AMPCfgPPO( G1LeggedRobotCfgPPO ):
         save_interval = 100
 
         amp_reward_coef = 0.2
-        amp_motion_files = MOTION_FILES
+        amp_motion_files = CARTESIAN_AND_JOINT_MOTION_FILES
         amp_cartesian_motion_files = CARTESIAN_MOTION_FILES
         amp_cartesian_and_joint_motion_files = CARTESIAN_AND_JOINT_MOTION_FILES
         
-        amp_num_preload_transitions = 1000000
+        # amp_num_preload_transitions = 2000000
+        amp_num_preload_transitions = 100000
         amp_task_reward_lerp = 0.3 # smaller to rely more on style reward(imitation)
         amp_discr_hidden_dims = [1024, 512]
 
-        # min_normalized_std = [0.02] * 23
-        min_normalized_std = [0.02] * 29
+        min_normalized_std = [0.02] * 23
 
   

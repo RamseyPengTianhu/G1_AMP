@@ -34,6 +34,8 @@ from warnings import WarningMessage
 import numpy as np
 import os
 
+import joblib
+
 from isaacgym.torch_utils import *
 from isaacgym import gymtorch, gymapi, gymutil
 
@@ -86,16 +88,22 @@ class G1LeggedRobot(BaseTask):
         self._init_buffers()
         self._prepare_reward_function()
         self.init_done = True
-        
+        # 在创建 AMPLoader 之前，先准备关节映射
+        self.dof_names = list(self.dof_names)  # 已经从 URDF 读到
+        joint_name_to_index = {name: i for i, name in enumerate(self.dof_names)}
         # 这里data仅用来reset
         if self.cfg.env.reference_state_initialization:
             self.amp_loader = AMPLoader(motion_files=self.cfg.env.amp_motion_files, device=self.device,
                                         time_between_frames=self.dt, 
-                                        selected_joint_indices=self.cfg.asset.selected_joint_indices)
+                                        selected_joint_indices=self.cfg.asset.selected_joint_indices,
+                                        dof_names=self.dof_names,
+                                        joint_name_to_index=joint_name_to_index,
+                                        )
         self.cartesian_data_link_indices = [self.body_names.index(link_name) for link_name in self.cfg.env.g1_cartesian_link_names if link_name in self.body_names]
         self.key_point_indices = [self.body_names.index(link_name) for link_name in self.cfg.env.key_point_names if link_name in self.body_names]
         print(f"Key point indices: {self.key_point_indices}")
-        self.end_effector_index = self.body_names.index(self.cfg.asset.end_effector_name)
+        self.end_effector_index = [self.body_names.index(link_name) for link_name in self.cfg.asset.end_effector_name if link_name in self.body_names]
+        
 
     def reset(self):
         """ Reset all robots"""
@@ -107,6 +115,19 @@ class G1LeggedRobot(BaseTask):
         obs, _, _, extras, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         privileged_obs = extras["observations"]["critic"]
         return obs, privileged_obs
+
+    def mocap_step(env, motion_file, frame_idx):
+        data = joblib.load(motion_file)
+        dof_pos = torch.tensor(data["dof_pos"], device=env.device)  # [T, dofs]
+        target_q = dof_pos[frame_idx]
+
+        # 把 target 当成 action
+        actions = (target_q - env.default_dof_pos) / env.cfg.control.action_scale
+        actions = torch.clip(actions, -1.0, 1.0).unsqueeze(0)  # [1, num_dofs]
+
+        # 走一次 step
+        obs, rew, done, extras, reset_ids, terminal = env.step(actions)
+        return obs
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -194,9 +215,9 @@ class G1LeggedRobot(BaseTask):
         self.lin_vel_error_buf[:] = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
         self.ang_vel_error_buf[:] = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
 
-        eff_dist = torch.norm(self.rigid_body_states[:, self.end_effector_index, 0:3] - self.target_pos, dim=1)
-        hit_now = (eff_dist < 0.10)
-        self.has_hit = torch.logical_or(self.has_hit, hit_now)
+        # eff_dist = torch.norm(self.rigid_body_states[:, self.end_effector_index, 0:3] - self.target_pos, dim=1)
+        # hit_now = (eff_dist < 0.10)
+        # self.has_hit = torch.logical_or(self.has_hit, hit_now)
 
         self._post_physics_step_callback()
 
@@ -220,17 +241,37 @@ class G1LeggedRobot(BaseTask):
         return env_ids, terminal_amp_states
 
     def check_termination(self):
-        """ Check if environments need to be reset
-        """
-        self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
-
-        # Reset if base z position is below threshold
+        """Check if environments need to be reset and print reasons."""
+        # reset 条件 buffer
+        reset_contact = torch.any(
+            torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1.,
+            dim=1,
+        )
         base_z = self.root_states[:, 2]
-        z_reset_buf = base_z < self.cfg.asset.terminate_after_base_z
-        
-        self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
-        self.reset_buf |= self.time_out_buf
-        self.reset_buf |= z_reset_buf
+        reset_base_height = base_z < self.cfg.asset.terminate_after_base_z
+        # reset_base_height = base_z < 0.25
+        reset_timeout = self.episode_length_buf > self.max_episode_length
+
+        # 合并
+        self.reset_buf = reset_contact | reset_base_height | reset_timeout
+        self.time_out_buf = reset_timeout
+
+
+          # ---- Debug 打印 ----
+        # if torch.any(self.reset_buf):
+        #     env_ids = torch.nonzero(self.reset_buf).squeeze(-1).tolist()
+        #     if not isinstance(env_ids, list):
+        #         env_ids = [env_ids]
+
+        #     for eid in env_ids:
+        #         reasons = []
+        #         if reset_contact[eid]:
+        #             reasons.append("contact")
+        #         if reset_base_height[eid]:
+        #             reasons.append(f"base_z={base_z[eid]:.3f} < {self.cfg.asset.terminate_after_base_z}")
+        #         if reset_timeout[eid]:
+        #             reasons.append("timeout")
+        #         print(f"[Reset] env {eid}: {', '.join(reasons)}")
 
     def reset_idx(self, env_ids):
         """ Reset some environments.
@@ -264,13 +305,15 @@ class G1LeggedRobot(BaseTask):
             self._zero_commands(env_ids)
         else:
             self._resample_commands(env_ids)
+            self._resample_commands_height(env_ids)
 
         if self.cfg.domain_rand.randomize_gains:
             new_randomized_gains = self.compute_randomized_gains(len(env_ids))
             self.randomized_p_gains[env_ids] = new_randomized_gains[0]
             self.randomized_d_gains[env_ids] = new_randomized_gains[1]
 
-        self._reset_target_pos(env_ids)
+        # self._reset_target_pos(env_ids)
+        self._reset_target_pos_box(env_ids)
 
         # reset buffers
         self.last_actions[env_ids] = 0.
@@ -363,10 +406,11 @@ class G1LeggedRobot(BaseTask):
 
             local_key_body_pos = world_key_body_pose - self.root_states[:, 0:3].unsqueeze(1)  # (N,K,3)
             local_key_body_pos = local_key_body_pos.view(N, K*3)
+
             
             return torch.cat((joint_pos, base_lin_vel, base_ang_vel, joint_vel, local_key_body_pos, z_pos), dim=-1)
             # return torch.cat((joint_pos, base_lin_vel, base_ang_vel, joint_vel, flat_local_key_pos, flat_local_link_quat, z_pos), dim=-1)
-            return torch.cat((joint_pos, base_lin_vel, base_ang_vel, joint_vel, z_pos), dim=-1)
+            # return torch.cat((joint_pos, base_lin_vel, base_ang_vel, joint_vel, z_pos), dim=-1)
         elif self.cfg.env.data_type == 'cartesian' or self.cfg.env.data_type == 'joints_and_cartesian':
             N = self.num_envs
             K = len(self.cartesian_data_link_indices)
@@ -524,7 +568,9 @@ class G1LeggedRobot(BaseTask):
             self._linear_commands(env_ids)
         else:
             self._resample_commands(env_ids)
-        self._reset_target_pos(env_ids)
+            self._resample_commands_height(env_ids)
+
+        self._reset_target_pos_box(env_ids)
         if self.cfg.commands.heading_command:
             forward = quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
@@ -579,6 +625,40 @@ class G1LeggedRobot(BaseTask):
         # set small commands to zero
         self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
 
+    def _resample_commands_height(self, env_ids):
+        """ Randommly select commands of some environments
+
+        Args:
+            env_ids (List[int]): Environments ids for which new commands are needed
+        """
+        self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["lin_vel_z"][0], self.command_ranges["lin_vel_z"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+
+    def set_robot_to_mocap_frame(env, motion_file, frame_idx=0):
+        """
+        把 env 里的 G1 机器人设置到 mocap 文件中的某一帧姿态
+        env: 你的 G1 环境 (LeggedRobot / G1Robot)
+        motion_file: mocap 的 pkl 文件路径
+        frame_idx: 使用第几帧 (默认 0)
+        """
+        # 1. 读 pkl
+        data = joblib.load(motion_file)
+        dof_pos = torch.tensor(data["dof_pos"], device=env.device)  # [T, num_dofs]
+        dof_vel = torch.zeros_like(dof_pos)
+
+        # 2. 取指定帧
+        q = dof_pos[frame_idx]
+        qdot = dof_vel[frame_idx]
+
+        # 3. 拼接成 Isaac Gym 的 dof_state [num_dofs, 2]
+        dof_state = torch.stack([q, qdot], dim=-1).contiguous()
+
+        # 4. 写入仿真
+        env.gym.set_dof_state_tensor(
+            env.sim, 
+            gymtorch.unwrap_tensor(dof_state)
+        )
+
+        print(f"✅ 已将机器人设置到 mocap 帧 {frame_idx} / {len(dof_pos)}")
     def _compute_torques(self, actions):
         """ Compute torques from actions.
             Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.
@@ -752,6 +832,14 @@ class G1LeggedRobot(BaseTask):
         noise_vec[12:24] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
         noise_vec[24:36] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
         noise_vec[36:48] = 0. # previous actions
+        # noise_vec[:3] = noise_scales.lin_vel * noise_level * self.obs_scales.lin_vel
+        # noise_vec[3:6] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
+        # noise_vec[6:9] = noise_scales.gravity * noise_level
+
+        # noise_vec[9:13] = 0. # commands
+        # noise_vec[13:25] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
+        # noise_vec[25:37] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
+        # noise_vec[37:49] = 0. # previous actions
         if self.cfg.terrain.measure_heights:
             noise_vec[48:235] = noise_scales.height_measurements* noise_level * self.obs_scales.height_measurements
         return noise_vec
@@ -797,7 +885,7 @@ class G1LeggedRobot(BaseTask):
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
-        self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
+        self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel, self.obs_scales.lin_vel_z], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
@@ -808,6 +896,8 @@ class G1LeggedRobot(BaseTask):
         self.ang_vel_error_buf = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
         self.target_pos = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
         self.has_hit = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False) # used to track if the robot has a history of actions
+        self.command_height = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
+
 
         if self.cfg.terrain.measure_heights:
             # 初始化用于存储测量高度的张量
@@ -1306,6 +1396,14 @@ class G1LeggedRobot(BaseTask):
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
+
+    def _reward_tracking_lin_vel_z(self):
+        # Tracking of linear velocity commands (xy axes)
+        # print('self.commands[:, 3].shape:',self.commands[:, 3].shape)
+        # print('self.base_lin_vel[:, 2].shape:',self.base_lin_vel[:, 2].shape)
+
+        lin_vel_error = torch.sum(torch.square(self.commands[:, 3] - self.base_lin_vel[:, 2]), dim=0)
         return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
     
     def _reward_tracking_ang_vel(self):

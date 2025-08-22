@@ -21,11 +21,17 @@ class G123AMPRobot(G1LeggedRobot):
         world_target_offset = self.target_pos[:, :2] - self.root_states[:, :2]  # [N, 2]
         local_target_offset = torch.bmm(rot_mat, world_target_offset.unsqueeze(-1)).squeeze(-1)  # [N, 2]
         local_target_offset = torch.cat((local_target_offset, (self.target_pos[:, 2] - self.root_states[:, 2]).unsqueeze(1)), dim=-1)  # [N, 3]
+        hands_z = self.rigid_body_states[:, self.end_effector_index, 2]  # [num_envs, 2]
+        # hands_z_mean = hands_z.mean(dim=1, keepdim=True)  # [num_envs, 1]
+
+
         self.privileged_obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
-                                    # self.commands[:, :3] * self.commands_scale,
-                                    local_target_offset,
+                                    # self.commands[:, :4] * self.commands_scale,
+                                    # local_target_offset,
+                                    self.command_height, 
+                                    hands_z,
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                                     self.dof_vel * self.obs_scales.dof_vel,
                                     self.actions
@@ -45,6 +51,56 @@ class G123AMPRobot(G1LeggedRobot):
         else:
             self.obs_buf = torch.clone(self.privileged_obs_buf)
 
+
+    def _reset_target_pos_box(self, env_ids=None):
+        if env_ids is None or len(env_ids) == 0:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        n = len(env_ids)
+
+        # -------- 1) 初始化 buffer --------
+        if not hasattr(self, "command_height") or self.command_height.shape != (self.num_envs, 1):
+            self.command_height = torch.zeros((self.num_envs, 1), device=self.device)
+
+        if not hasattr(self, "has_hit"):
+            self.has_hit = torch.zeros((self.num_envs,), dtype=torch.bool, device=self.device)
+        if not hasattr(self, "root_pos_start"):
+            self.root_pos_start = torch.zeros((self.num_envs, 3), device=self.device)
+
+        # -------- 2) 读高度范围 --------
+        if hasattr(self, "command_ranges"):
+            if "command_height" in self.command_ranges:
+                h_min, h_max = self.command_ranges["command_height"]
+            elif "target_z" in self.command_ranges:
+                h_min, h_max = self.command_ranges["target_z"]
+            elif "height_z" in self.command_ranges:
+                h_min, h_max = self.command_ranges["height_z"]
+            else:
+                h_min, h_max = self.cfg.commands.ranges.target_z
+        else:
+            h_min, h_max = self.cfg.commands.ranges.target_z
+
+        # -------- 3) 分情况设置高度 --------
+        sine_mode = getattr(self, "_height_mode", None) == "sine"
+        if sine_mode:
+            # 正弦模式：保持 play.py 的实时更新值
+            target_z = self.command_height[env_ids]
+        else:
+            # 固定/采样模式
+            if abs(h_max - h_min) < 1e-8:
+                target_z = torch.full((n, 1), float(h_min), device=self.device)
+            else:
+                target_z = torch.empty((n, 1), device=self.device).uniform_(float(h_min), float(h_max))
+
+        # -------- 4) 写入 buffer --------
+        self.command_height[env_ids] = target_z
+        self.object_pos_z = self.command_height.clone()
+        self.has_hit[env_ids] = False
+        self.root_pos_start[env_ids] = self.root_states[env_ids, 0:3].detach()
+
+        # Debug 打印
+        # print("sine_mode:", sine_mode)
+        # print("target_z:", target_z)
+        # print("self.command_height[env_ids]:", self.command_height[env_ids])
 
     def _reset_target_pos(self, env_ids=None):
         # env_ids: 要重置 target 的环境编号, 支持 batch
@@ -79,6 +135,9 @@ class G123AMPRobot(G1LeggedRobot):
         target_z = torch.empty(len(env_ids), device=self.device).uniform_(self.cfg.commands.ranges.target_z[0], self.cfg.commands.ranges.target_z[1]).unsqueeze(1)
         self.target_pos[env_ids] = torch.cat([target_xy, target_z], dim=-1)  # [N, 3]
         self.has_hit[env_ids] = False  # 重置 has_hit 状态
+
+
+
         
     def _reward_strike(self):
         # 1. 位置和速度
@@ -118,6 +177,61 @@ class G123AMPRobot(G1LeggedRobot):
         )
 
         return reward
+
+
+    def _reward_twohands_to_height(self):
+        """
+        两手对齐目标高度（只track z）：距离_z + 同步 +（可选）根漂移。
+        依赖：
+        - self.object_pos_z: [B] 或 [B,1]，目标高度（世界系 z）
+        - self.hand_indices: [idx_L, idx_R]
+        - self.rigid_body_states: [..., 13]（第 3 个坐标是 z）
+        - (可选) self.root_pos_start 用于根漂移罚
+        """
+        import torch
+        B = self.root_states.shape[0]
+        L, R = self.end_effector_index
+
+        # 目标高度 z，统一成 [B,1]
+        target_z = self.object_pos_z
+        if target_z.ndim == 1:
+            target_z = target_z.unsqueeze(1)                # [B,1]
+        elif target_z.shape[1] != 1:
+            target_z = target_z[:, :1]                      # 兜底取第一列
+
+        # 两只手的当前高度 z -> [B,2]
+        hand_z = torch.stack([
+            self.rigid_body_states[:, L, 2],               # 左手 z
+            self.rigid_body_states[:, R, 2],               # 右手 z
+        ], dim=1)                                          # [B,2]
+
+        # 与目标高度的绝对误差 -> [B,2]
+        dz = torch.abs(hand_z - target_z)                  # [B,2]
+
+        # 位置项（高斯）：越接近目标 z 越好
+        sigma_z = 0.06                                     # 6cm
+        r_pos_each = torch.exp(- (dz ** 2) / (2 * sigma_z ** 2))  # [B,2]
+        r_pos = r_pos_each.mean(dim=1)                             # [B]
+
+        # 双手同步（高度差越小越好）
+        r_sync = torch.exp(- torch.abs(hand_z[:, 0] - hand_z[:, 1]) / 0.03)     # [B]
+
+        # 命中保持：两手都在阈值内
+        eps_z = 0.03                                 # 3cm
+        hold = 0.5 * ((dz < eps_z).float().prod(dim=1))     # [B]
+
+        # （可选）根漂移惩罚：只要你还想压制走动
+        p_drift = 0.0
+        if hasattr(self, "root_pos_start"):
+            root_drift = torch.norm(self.root_states[:, 0:3] - self.root_pos_start, dim=1)
+            p_drift = -0.5 * torch.clamp(root_drift - 0.03, min=0.0)
+
+        reward = r_pos + 0.2 * r_sync + hold + p_drift
+        return torch.clamp(reward, 0.0, 3.0)
+
+
+
+    
 
     def _reward_minimize_torso_angular_velocity(self):
         """

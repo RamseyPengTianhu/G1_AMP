@@ -109,15 +109,35 @@ class G1AMPOnPolicyRunner:
 
         # init AMP discriminator and data loader
         if self.model_cfg["env"]["data_type"] == "joint":
+            print('!!!!!!!!')
+            # 1) 从 VecEnv 中稳妥拿到 dof_names
+            dof_names = list(getattr(self.env, "dof_names", []))
+            if not dof_names and hasattr(self.env, "envs") and len(self.env.envs) > 0:
+                dof_names = list(getattr(self.env.envs[0], "dof_names", []))
+            if not dof_names and hasattr(self.env, "base_env"):
+                dof_names = list(getattr(self.env.base_env, "dof_names", []))
+            if not dof_names and hasattr(self.env, "task"):
+                dof_names = list(getattr(self.env.task, "dof_names", []))
+            if not dof_names:
+                raise ValueError("Runner: cannot find dof_names on env/vecenv; please expose dof_names from the task.")
+
+            joint_name_to_index = {n: i for i, n in enumerate(dof_names)}
+            print('dof_names:',dof_names)
+            print('dof_najoint_name_to_indexmes:',joint_name_to_index)
             amp_data = AMPLoader(
                 device, time_between_frames=self.env.dt, preload_transitions=True,
                 num_preload_transitions=train_cfg["runner"]["amp_num_preload_transitions"],
-                motion_files=self.runner_cfg["amp_motion_files"], selected_joint_indices=self.model_cfg["asset"]["selected_joint_indices"])
+                motion_files=self.runner_cfg["amp_motion_files"], 
+                selected_joint_indices=self.model_cfg["asset"]["selected_joint_indices"],
+                dof_names=dof_names,                       # 新增
+                joint_name_to_index=joint_name_to_index,   # 新增
+                )
         elif self.model_cfg["env"]["data_type"] == "cartesian":
             amp_data = AMPLoader(
                 device, time_between_frames=self.env.dt, preload_transitions=True,
                 num_preload_transitions=train_cfg["runner"]["amp_num_preload_transitions"],
                 motion_files=self.runner_cfg["amp_cartesian_motion_files"], selected_joint_indices=self.model_cfg["asset"]["selected_joint_indices"],
+
                 datatype="Cartesian")
         else:
             amp_data = AMPLoader(

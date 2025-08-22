@@ -160,6 +160,7 @@ class G1LeggedRobotCfg(BaseConfig):
         class obs_scales:
             lin_vel = 2.0
             ang_vel = 0.25
+            lin_vel_z = 1.0
             dof_pos = 1.0
             dof_vel = 0.05
             height_measurements = 5.0
@@ -174,6 +175,8 @@ class G1LeggedRobotCfg(BaseConfig):
             dof_vel = 1.5
             lin_vel = 0.1
             ang_vel = 0.2
+            lin_vel_z = 0.1
+
             gravity = 0.05
             height_measurements = 0.1
 
