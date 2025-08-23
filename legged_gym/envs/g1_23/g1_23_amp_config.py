@@ -225,6 +225,7 @@ class G123AMPCfg( G1LeggedRobotCfg ):
             collision = -0.75
             action_rate = -0.01
             dof_pos_limits = -2.0
+            termination = -10
 
     class commands:
         curriculum = False
